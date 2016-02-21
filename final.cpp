@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <ctype.h>
 
+#include "helpers.h"
+
 const char* usage_message =
 "Options:\n"
 "   -h <ip>: IP Adress of web server\n"
@@ -57,5 +59,11 @@ int main(int argc, char * const argv[])
     printf("-h=='%s' -p=='%s' -d=='%s'\n", ip_address, port, directory);
   }
 
-  return 0;
+  daemonize();
+
+  while(true) {
+    sleep(5);
+  }
+
+  return EXIT_SUCCESS;
 }

@@ -1,3 +1,4 @@
 cmake_minimum_required (VERSION 2.6)
 project (final)
-add_executable(final final.cpp)
+file(GLOB SRC_FILES *.cpp)
+add_executable(final ${SRC_FILES})
