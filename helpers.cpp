@@ -40,11 +40,9 @@ void daemonize()
   close(STDIN_FILENO);
   close(STDOUT_FILENO);
   close(STDERR_FILENO);
-
-  openlog("stepic.org", 0, LOG_USER);
 }
 
-void start_server(int argc, char * const argv[])
+void parse_cl_ordie(int argc, char * const argv[], cl_initial_values& values)
 {
   opterr = 0;
   const char* ip_address = NULL;
@@ -96,6 +94,7 @@ void start_server(int argc, char * const argv[])
     port_num = 8888;
   }
 
-  syslog(LOG_NOTICE, "Working on %s:%d and serving '%s'", ip_address, port_num, directory);
-
+  values.ip = std::string(ip_address);
+  values.port = port_num;
+  values.dir = std::string(directory);
 }
