@@ -91,11 +91,14 @@ int main(int argc, char * const argv[])
   uv_tcp_init(loop, &server);
 
   uv_ip4_addr(values.ip.c_str(), values.port, &addr);
-  uv_tcp_bind(&server, (const struct sockaddr*)&addr, 0);
+  if (int r = uv_tcp_bind(&server, (const struct sockaddr*)&addr, 0)) {
+    syslog(LOG_ERR, "Bind error %s", uv_strerror(r));
+    closelog();
+    return EXIT_FAILURE;
+  }
 
-  int r = uv_listen((uv_stream_t*) &server, SOMAXCONN, on_new_connection);
-  if (r) {
-      syslog(LOG_ERR, "Listen error %s\n", uv_strerror(r));
+  if (int r = uv_listen((uv_stream_t*) &server, SOMAXCONN, on_new_connection)) {
+      syslog(LOG_ERR, "Listen error %s", uv_strerror(r));
       closelog();
       return EXIT_FAILURE;
   }
