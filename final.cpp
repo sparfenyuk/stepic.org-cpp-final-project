@@ -9,9 +9,70 @@
 
 uv_loop_t* loop = NULL;
 
+void alloc_buffer(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf)
+{
+  *buf = uv_buf_init((char*) malloc(suggested_size), suggested_size);
+}
+
+void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf)
+{
+  syslog(LOG_NOTICE, "on read");
+  if (nread < 0){
+    if (nread == UV_EOF){
+    }
+  } else if (nread > 0) {
+    syslog(LOG_NOTICE, "Request received: \n%s", (const char*)buf->base);
+  }
+  if (buf->base) {
+    free(buf->base);
+  }
+}
+
+void on_new_client(uv_work_t* req)
+{
+  uv_tcp_t* client = (uv_tcp_t*)req->data;
+  int r = uv_read_start((uv_stream_t*)client, alloc_buffer, on_read);
+  if (r != 0) {
+    syslog(LOG_ERR, "Error on reading client stream: %s.\n",
+                    uv_strerror(r));
+    uv_close((uv_handle_t*)client, NULL);
+  }
+  syslog(LOG_NOTICE, "on read start");
+}
+
+void on_new_client_end(uv_work_t* req, int status)
+{
+  syslog(LOG_NOTICE, "on new client end");
+  return;
+  if (status < 0) {
+    ;
+  }
+  syslog(LOG_NOTICE, "Connection closed");
+  uv_close((uv_handle_t*)req->data, NULL);
+  free(req);
+  req = NULL;
+}
+
 void on_new_connection(uv_stream_t* server, int status)
 {
+  if (status < 0) {
+      syslog(LOG_ERR, "New connection error %s\n", uv_strerror(status));
+      return;
+  }
   syslog(LOG_NOTICE, "New connection come");
+  uv_tcp_t *client = (uv_tcp_t*) malloc(sizeof(uv_tcp_t));
+  uv_tcp_init(loop, client);
+  if (uv_accept(server, (uv_stream_t*) client) == 0) {
+    syslog(LOG_NOTICE, "Connection accepted");
+    uv_work_t* req = (uv_work_t*)malloc(sizeof(uv_work_t));
+    req->data = (void*)client;
+    if (uv_queue_work(loop, req, on_new_client, NULL) == 0) {
+      syslog(LOG_NOTICE, "Client passed to queue");
+    }
+  }
+  else {
+      uv_close((uv_handle_t*) client, NULL);
+  }
 }
 
 
