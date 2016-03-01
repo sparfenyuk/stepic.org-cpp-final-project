@@ -15,6 +15,7 @@ struct client_t {
   uv_work_t* work;
   uv_tcp_t* handler;
   http_parser* parser;
+  std::string url;
   int id;
   client_t()
   : work(NULL)
@@ -49,6 +50,25 @@ int on_http_headers_complete(http_parser* parser)
 {
   return 0;
 }
+int on_http_url(http_parser* parser, const char *at, size_t length)
+{
+  struct client_t* client = (client_t*) parser->data;
+  client->url = std::string(at, length);
+  // syslog(LOG_NOTICE, "URL: %s", client->url.c_str());
+  return 0;
+}
+
+int on_http_header_field(http_parser* parser, const char *at, size_t length)
+{
+  syslog(LOG_NOTICE, "Field: %s", std::string(at, length).c_str());
+  return 0;
+}
+
+int on_http_header_value(http_parser* parser, const char *at, size_t length)
+{
+  syslog(LOG_NOTICE, "Value: %s", std::string(at, length).c_str());
+  return 0;
+}
 
 http_parser_settings *get_http_settings()
 {
@@ -57,10 +77,10 @@ http_parser_settings *get_http_settings()
     if (!parser_settings) {
         parser_settings = (http_parser_settings*)malloc(sizeof(http_parser_settings));
         memset(parser_settings, 0, sizeof(http_parser_settings));
-        // parser_settings->on_url              = on_http_url;
+        parser_settings->on_url              = on_http_url;
         // parser_settings->on_header_field     = on_http_header_field;
         // parser_settings->on_header_value     = on_http_header_value;
-        parser_settings->on_headers_complete = on_http_headers_complete;
+        // parser_settings->on_headers_complete = on_http_headers_complete;
         // parser_settings->on_body                = on_http_body;
     }
 
@@ -80,7 +100,7 @@ bool do_http_parse(struct client_t* client, const char *buf, size_t length)
   if (nparsed != length) {
       syslog(LOG_ERR, "%zu!=%zu: %s", nparsed, length, http_errno_description(HTTP_PARSER_ERRNO(client->parser)));
   }
-  return nparsed != length;
+  return nparsed == length;
 }
 
 void alloc_buffer(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf)
@@ -97,6 +117,10 @@ void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf)
     syslog(LOG_NOTICE, "Nothing to read from client's #%d stream (EOF=%s)",
         client->id, (nread == UV_EOF ? "yes":"no"));
     if (nread == UV_EOF){
+      
+    }
+    else {
+      finalize(client);
     }
   } else if (nread > 0) {
     syslog(LOG_NOTICE, "Request received: \n%s", (const char*)buf->base);
@@ -104,6 +128,9 @@ void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf)
     bool parsed = do_http_parse(client, buf->base, nread);
     if (!parsed) {
       finalize(client);
+    }
+    else {
+      syslog(LOG_NOTICE, "Method: %s, URL: %s", http_method_str((enum http_method)client->parser->method), client->url.c_str());
     }
     free(buf->base);
   }
