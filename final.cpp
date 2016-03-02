@@ -136,8 +136,9 @@ void write_data(uv_stream_t* handler, const char* buffer, size_t len, uv_write_c
 {
   uv_write_t* req = (uv_write_t*) malloc(sizeof(uv_write_t));
   req->data = handler->data;
-  uv_buf_t bufs = uv_buf_init((char*)malloc(len), len);
-  memcpy(bufs.base,buffer,len);
+  const uv_buf_t& bufs = uv_buf_init((char*)malloc(len+1), len+1);
+  strncpy(bufs.base, buffer, len);
+  // memcpy(bufs.base,buffer,len);
   uv_write(req, handler, &bufs, 1, cb);
 }
 
