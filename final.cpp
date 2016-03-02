@@ -9,6 +9,8 @@
 
 #include "helpers.h"
 
+FILE* logfile = NULL;
+
 uv_loop_t* loop = NULL;
 cl_initial_values values;
 
@@ -30,7 +32,7 @@ struct client_t {
 
 void finalize(struct client_t* client)
 {
-  syslog(LOG_NOTICE, "Closing connection with client #%d", client->id);
+  // fprintf(logfile, "Closing connection with client #%d", client->id);
   if (client->handler) {
     uv_close((uv_handle_t*)client->handler, NULL);
     // free(client->handler);
@@ -61,19 +63,19 @@ int on_http_url(http_parser* parser, const char *at, size_t length)
   if (pos != std::string::npos) {
     client->url = std::string(at, pos);
   }
-  // syslog(LOG_NOTICE, "URL: %s", client->url.c_str());
+  // fprintf(logfile, "URL: %s", client->url.c_str());
   return 0;
 }
 
 int on_http_header_field(http_parser* parser, const char *at, size_t length)
 {
-  syslog(LOG_NOTICE, "Field: %s", std::string(at, length).c_str());
+  // fprintf(logfile, "Field: %s", std::string(at, length).c_str());
   return 0;
 }
 
 int on_http_header_value(http_parser* parser, const char *at, size_t length)
 {
-  syslog(LOG_NOTICE, "Value: %s", std::string(at, length).c_str());
+  // fprintf(logfile, "Value: %s", std::string(at, length).c_str());
   return 0;
 }
 
@@ -110,7 +112,7 @@ bool do_http_parse(struct client_t* client, const char *buf, size_t length)
   size_t nparsed = http_parser_execute(client->parser, get_http_settings(), buf, length);
 
   if (nparsed != length) {
-      syslog(LOG_ERR, "%zu!=%zu: %s", nparsed, length, http_errno_description(HTTP_PARSER_ERRNO(client->parser)));
+      // fprintf(logfile, "%zu!=%zu: %s", nparsed, length, http_errno_description(HTTP_PARSER_ERRNO(client->parser)));
   }
   return nparsed == length;
 }
@@ -118,7 +120,7 @@ bool do_http_parse(struct client_t* client, const char *buf, size_t length)
 void on_write_end(uv_write_t* req, int status)
 {
   if (status < 0) {
-    syslog(LOG_ERR, "Send response error %s\n", uv_strerror(status));
+    // fprintf(logfile, "Send response error %s\n", uv_strerror(status));
   }
   if(req->bufs) {
     free(req->bufs->base);
@@ -139,12 +141,12 @@ void write_data(uv_stream_t* handler, const char* buffer, size_t len, void* req_
   uv_write(req, handler, &bufs, 1, cb);
 }
 
-#define error_404 "HTTP/1.1 404 Not Found\r\n"\
-                  "Connection:close\r\n"\
+#define error_404 "HTTP/1.0 404 NOT FOUND\r\n"\
+                  "Connection: close\r\n"\
                   "\r\n"
 void send_404(struct client_t* client)
 {
-  syslog(LOG_NOTICE, "File not found %s", client->url.c_str());
+  // fprintf(logfile, "File not found %s", client->url.c_str());
   size_t len = strlen(error_404);
   write_data((uv_stream_t*)client->handler, error_404, len, client, on_write_end);
 }
@@ -152,6 +154,7 @@ void send_404(struct client_t* client)
 void send_file_content(uv_write_t* req, int status);
 
 #define http_ok   "HTTP/1.0 200 OK\r\n"\
+                  "Connection: close\r\n"\
                   "Content-Type: text/html\r\n"\
                   "\r\n"
 void send_200(struct client_t* client)
@@ -165,16 +168,16 @@ void on_file_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf)
   struct client_t* client = (client_t*)stream->data;
 
   if (nread == UV_EOF) {
-    syslog(LOG_NOTICE, "Read file %s", ">eof");
+    // fprintf(logfile, "Read file %s", ">eof");
     // on_file_read_end(stream, )
   } else if (nread > 0) {
-    syslog(LOG_NOTICE, "Read file %d bytes", nread);
+    // fprintf(logfile, "Read file %ld bytes", nread);
     // file_tcp_pipe->nread += nread;
     write_data((uv_stream_t*)client->handler, buf->base, nread, NULL, on_write_end);
     uv_close((uv_handle_t*)stream, NULL);
     finalize(client);
   } else {
-    syslog(LOG_NOTICE, "Read file %s", "end");
+    // fprintf(logfile, "Read file %s", "end");
     // file_tcp_pipe_end(file_tcp_pipe, nread, CALLBACK);
   }
   if (buf->base)
@@ -191,7 +194,7 @@ void send_file_content(uv_write_t* req, int status)
 
   std::string path = values.dir + client->url;
 
-  syslog(LOG_NOTICE, "Read file %s", path.c_str());
+  // fprintf(logfile, "Read file %s", path.c_str());
   uv_pipe_t *file_pipe = (uv_pipe_t*) malloc(sizeof(uv_pipe_t));
   uv_fs_t file_open_req;
   int fd = uv_fs_open(loop, &file_open_req, path.c_str(), O_RDONLY, 0644, NULL);
@@ -234,11 +237,11 @@ void make_response(struct client_t* client)
 void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf)
 {
   struct client_t* client = client_from_handler((uv_tcp_t*)stream);
-  syslog(LOG_NOTICE, "On read from client's #%d stream", client->id);
+  // fprintf(logfile, "On read from client's #%d stream", client->id);
 
   if (nread < 0){
-    syslog(LOG_NOTICE, "Nothing to read from client's #%d stream (EOF=%s)",
-        client->id, (nread == UV_EOF ? "yes":"no"));
+    // fprintf(logfile, "Nothing to read from client's #%d stream (EOF=%s)",
+        // client->id, (nread == UV_EOF ? "yes":"no"));
     if (nread == UV_EOF){
       make_response(client);
     }
@@ -246,14 +249,14 @@ void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf)
       finalize(client);
     }
   } else if (nread > 0) {
-    syslog(LOG_NOTICE, "Request received: \n%s", (const char*)buf->base);
+    // fprintf(logfile, "Request received: \n%s", (const char*)buf->base);
 
     bool parsed = do_http_parse(client, buf->base, nread);
     if (!parsed) {
       finalize(client);
     }
     else {
-      syslog(LOG_NOTICE, "Method: %s, URL: %s", http_method_str((enum http_method)client->parser->method), client->url.c_str());
+      // fprintf(logfile, "Method: %s, URL: %s", http_method_str((enum http_method)client->parser->method), client->url.c_str());
       uv_read_stop(stream);
       make_response(client);
     }
@@ -264,17 +267,17 @@ void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf)
 void on_new_client(uv_work_t* req)
 {
   struct client_t* client = (client_t*) req->data;
-  syslog(LOG_NOTICE, "Get client #%d from queue", client->id);
+  // fprintf(logfile, "Get client #%d from queue", client->id);
 
   uv_stream_t* stream = (uv_stream_t*) client->handler;
   int r = uv_read_start(stream, alloc_buffer, on_read);
   if (r != 0) {
-    syslog(LOG_ERR, "Error on reading client's #%d stream: %s",
-                    client->id, uv_strerror(r));
+    // fprintf(logfile, "Error on reading client's #%d stream: %s",
+                    // client->id, uv_strerror(r));
     finalize(client);
   }
   else {
-    syslog(LOG_NOTICE, "On start reading client's #%d stream", client->id);
+    // fprintf(logfile, "On start reading client's #%d stream", client->id);
   }
 }
 
@@ -285,16 +288,16 @@ void on_new_client_end(uv_work_t* req, int status)
 void on_new_connection(uv_stream_t* server, int status)
 {
   if (status < 0) {
-      syslog(LOG_ERR, "New connection error %s\n", uv_strerror(status));
+      // fprintf(logfile, "New connection error %s\n", uv_strerror(status));
       return;
   }
-  syslog(LOG_NOTICE, "New connection come");
+  // fprintf(logfile, "New connection come");
 
   uv_tcp_t *handler = (uv_tcp_t*) malloc(sizeof(uv_tcp_t));
   uv_tcp_init(loop, handler);
 
   if (uv_accept(server, (uv_stream_t*) handler) == 0) {
-    syslog(LOG_NOTICE, "Connection accepted");
+    // fprintf(logfile, "Connection accepted");
 
     uv_work_t* req = (uv_work_t*)malloc(sizeof(uv_work_t));
 
@@ -305,7 +308,7 @@ void on_new_connection(uv_stream_t* server, int status)
 
     req->data = (void*)client;
     if (uv_queue_work(loop, req, on_new_client, NULL) == 0) {
-      syslog(LOG_NOTICE, "Client #%d passed to queue", client->id);
+      // fprintf(logfile, "Client #%d passed to queue", client->id);
     }
   }
   else {
@@ -317,9 +320,10 @@ void on_new_connection(uv_stream_t* server, int status)
 int main(int argc, char * const argv[])
 {
   signal(SIGHUP, SIG_IGN);
-  
+
   daemonize();
-  openlog("stepic.org", 0, LOG_USER);
+
+  logfile = fopen("stepic.txt", "a");
 
   parse_cl_ordie(argc, argv, values);
 
@@ -331,18 +335,18 @@ int main(int argc, char * const argv[])
 
   uv_ip4_addr(values.ip.c_str(), values.port, &addr);
   if (int r = uv_tcp_bind(&server, (const struct sockaddr*)&addr, 0)) {
-    syslog(LOG_ERR, "Bind error %s", uv_strerror(r));
-    closelog();
+    // fprintf(logfile, "Bind error %s", uv_strerror(r));
+    // closelog();
     return EXIT_FAILURE;
   }
 
   if (int r = uv_listen((uv_stream_t*) &server, SOMAXCONN, on_new_connection)) {
-      syslog(LOG_ERR, "Listen error %s", uv_strerror(r));
-      closelog();
+      // fprintf(logfile, "Listen error %s", uv_strerror(r));
+      // closelog();
       return EXIT_FAILURE;
   }
 
-  syslog(LOG_NOTICE, "Working on %s:%d and serving '%s'", values.ip.c_str(), values.port, values.dir.c_str());
+  // fprintf(logfile, "Working on %s:%d and serving '%s'", values.ip.c_str(), values.port, values.dir.c_str());
 
   return uv_run(loop, UV_RUN_DEFAULT);
 }

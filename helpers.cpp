@@ -16,6 +16,7 @@ const char* usage_message =
 "   -p <port>: port of web server\n"
 "   -d <dir>: directory to serve";
 
+extern FILE* logfile;
 
 void daemonize()
 {
@@ -68,12 +69,12 @@ void parse_cl_ordie(int argc, char * const argv[], cl_initial_values& values)
           case 'h':
           case 'p':
           case 'd':
-            syslog(LOG_ERR, "Option -%c requires an argument.", optopt);
+            fprintf(logfile, "Option -%c requires an argument.", optopt);
           default:
             if (isprint (optopt))
-              syslog(LOG_ERR,  "Unknown option `-%c'.\n", optopt);
+              fprintf(logfile,  "Unknown option `-%c'.\n", optopt);
             else
-              syslog(LOG_ERR,
+              fprintf(logfile,
                        "Unknown option character `\\x%x'.\n",
                        optopt);
           }
@@ -84,13 +85,13 @@ void parse_cl_ordie(int argc, char * const argv[], cl_initial_values& values)
   }
 
   if (!ip_address || !port || !directory) {
-    syslog(LOG_ERR, "%s", usage_message);
+    fprintf(logfile, "%s", usage_message);
     exit(EXIT_FAILURE);
   }
 
   int port_num = atoi(port);
   if (port_num == 0) {
-    syslog(LOG_NOTICE, "Using default port 8888");
+    fprintf(logfile, "Using default port 8888");
     port_num = 8888;
   }
 
