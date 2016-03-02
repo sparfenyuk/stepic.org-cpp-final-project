@@ -14,15 +14,13 @@ cl_initial_values values;
 
 static int _id = 0;
 struct client_t {
-  uv_work_t* work;
   uv_tcp_t* handler;
   http_parser* parser;
   std::string url;
   uint64_t content_size;
   int id;
   client_t()
-  : work(NULL)
-  , handler(NULL)
+  : handler(NULL)
   , parser(NULL)
   , content_size(0)
   {
@@ -279,9 +277,9 @@ void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf)
   }
 }
 
-void on_new_client(uv_work_t* req)
+void on_new_client(void* arg)
 {
-  struct client_t* client = (client_t*) req->data;
+  struct client_t* client = (client_t*) arg;
   syslog(LOG_NOTICE, "Get client #%d from queue", client->id);
 
   uv_stream_t* stream = (uv_stream_t*) client->handler;
@@ -294,10 +292,6 @@ void on_new_client(uv_work_t* req)
   else {
     syslog(LOG_NOTICE, "On start reading client's #%d stream", client->id);
   }
-}
-
-void on_new_client_end(uv_work_t* req, int status)
-{
 }
 
 void on_new_connection(uv_stream_t* server, int status)
@@ -314,15 +308,13 @@ void on_new_connection(uv_stream_t* server, int status)
   if (uv_accept(server, (uv_stream_t*) handler) == 0) {
     syslog(LOG_NOTICE, "Connection accepted");
 
-    uv_work_t* req = (uv_work_t*)malloc(sizeof(uv_work_t));
-
     struct client_t* client = new client_t();
     client->handler = handler;
     handler->data = (void*)client;
-    client->work = req;
 
-    req->data = (void*)client;
-    if (uv_queue_work(loop, req, on_new_client, NULL) == 0) {
+    uv_thread_t tid;
+    if (uv_thread_create(&tid, on_new_client, client) == 0) {
+      uv_thread_join(&tid);
       syslog(LOG_NOTICE, "Client #%d passed to queue", client->id);
     }
   }
