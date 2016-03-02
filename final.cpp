@@ -316,6 +316,8 @@ void on_new_connection(uv_stream_t* server, int status)
 
 int main(int argc, char * const argv[])
 {
+  signal(SIGHUP, SIG_IGN);
+  
   daemonize();
   openlog("stepic.org", 0, LOG_USER);
 
