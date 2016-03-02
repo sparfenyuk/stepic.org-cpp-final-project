@@ -136,9 +136,8 @@ void write_data(uv_stream_t* handler, const char* buffer, size_t len, uv_write_c
 {
   uv_write_t* req = (uv_write_t*) malloc(sizeof(uv_write_t));
   req->data = handler->data;
-  const uv_buf_t& bufs = uv_buf_init((char*)malloc(len+1), len+1);
+  const uv_buf_t& bufs = uv_buf_init((char*)malloc(len), len);
   strncpy(bufs.base, buffer, len);
-  // memcpy(bufs.base,buffer,len);
   uv_write(req, handler, &bufs, 1, cb);
 }
 
@@ -150,7 +149,7 @@ void write_data(uv_stream_t* handler, const char* buffer, size_t len, uv_write_c
 void send_404(struct client_t* client)
 {
   syslog(LOG_NOTICE, "File not found %s", client->url.c_str());
-  size_t len = strlen(error_404);
+  size_t len = strlen(error_404) + 1;
   write_data((uv_stream_t*)client->handler, error_404, len, on_write_end);
 }
 
