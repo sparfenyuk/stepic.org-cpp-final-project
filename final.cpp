@@ -172,8 +172,24 @@ void send_200(struct client_t* client)
 void on_file_send(uv_fs_t* req)
 {
   client_t* client = (client_t*)req->data;
-  uv_fs_req_cleanup(req);
   finalize(client);
+  uv_fs_req_cleanup(req);
+}
+
+void on_file_opened(uv_fs_t* req)
+{
+  client_t* client = (client_t*)req->data;
+  req->data = NULL;
+  uv_fs_t* file_send_req = (uv_fs_t*)malloc(sizeof(uv_fs_t));
+  file_send_req->data = client;
+  uv_file out_fd;
+  uv_fileno((uv_handle_t *)client->handler, &out_fd);
+  if (uv_fs_sendfile(loop, file_send_req, out_fd, req->result, 0, client->content_size, on_file_send) < 0) {
+    syslog(LOG_ERR, "Cannot send file for client #%d", client->id);
+    uv_fs_req_cleanup(file_send_req);
+    finalize(client);
+  }
+  uv_fs_req_cleanup(req);
 }
 
 void send_file_content(uv_write_t* req, int status)
@@ -190,21 +206,12 @@ void send_file_content(uv_write_t* req, int status)
 
   syslog(LOG_NOTICE, "Read file %s", path.c_str());
 
-  uv_fs_t file_open_req;
-  int fd = uv_fs_open(loop, &file_open_req, path.c_str(), O_RDONLY, 0644, NULL);
-  if (fd < 0) {
+  uv_fs_t* file_open_req = (uv_fs_t*)malloc(sizeof(uv_fs_t));
+  file_open_req->data = client;
+
+  if (uv_fs_open(loop, file_open_req, path.c_str(), O_RDONLY, 0644, on_file_opened) < 0) {
     syslog(LOG_ERR, "Cannot open file %s", path.c_str());
-  }
-  else {
-    uv_fs_t* file_send_req = (uv_fs_t*)malloc(sizeof(uv_fs_t));
-    file_send_req->data = client;
-    uv_file out_fd;
-    uv_fileno((uv_handle_t *)client->handler, &out_fd);
-    if (uv_fs_sendfile(loop, file_send_req, out_fd, fd, 0, client->content_size, on_file_send) < 0) {
-      syslog(LOG_ERR, "Cannot send file for client #%d", client->id);
-      uv_fs_req_cleanup(file_send_req);
-      finalize(client);
-    }
+    finalize(client);
   }
 }
 
