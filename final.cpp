@@ -18,11 +18,13 @@ struct client_t {
   uv_tcp_t* handler;
   http_parser* parser;
   std::string url;
+  uint64_t content_size;
   int id;
   client_t()
   : work(NULL)
   , handler(NULL)
   , parser(NULL)
+  , content_size(0)
   {
     id = ++_id;
   }
@@ -56,12 +58,12 @@ int on_http_headers_complete(http_parser* parser)
 int on_http_url(http_parser* parser, const char *at, size_t length)
 {
   struct client_t* client = (client_t*) parser->data;
-  client->url = std::string(at, length);
+  client->url = std::string(&at[1], length-1);
   size_t pos = client->url.find_first_of('?');
   if (pos != std::string::npos) {
-    client->url = std::string(at, pos);
+    client->url = std::string(&at[1], pos);
   }
-  // syslog(LOG_NOTICE, "URL: %s", client->url.c_str());
+
   return 0;
 }
 
@@ -130,89 +132,102 @@ void on_write_end(uv_write_t* req, int status)
   }
 }
 
-void write_data(uv_stream_t* handler, const char* buffer, size_t len, void* req_data, uv_write_cb cb)
+void write_data(uv_stream_t* handler, const char* buffer, size_t len, uv_write_cb cb)
 {
   uv_write_t* req = (uv_write_t*) malloc(sizeof(uv_write_t));
-  req->data = req_data;
+  req->data = handler->data;
   uv_buf_t bufs = uv_buf_init((char*)malloc(len), len);
   memcpy(bufs.base,buffer,len);
   uv_write(req, handler, &bufs, 1, cb);
 }
 
 #define error_404 "HTTP/1.1 404 Not Found\r\n"\
+                  "Content-Length: 14\r\n"\
                   "Connection:close\r\n"\
-                  "\r\n"
+                  "\r\n"\
+                  "File not found"
 void send_404(struct client_t* client)
 {
   syslog(LOG_NOTICE, "File not found %s", client->url.c_str());
   size_t len = strlen(error_404);
-  write_data((uv_stream_t*)client->handler, error_404, len, client, on_write_end);
+  write_data((uv_stream_t*)client->handler, error_404, len, on_write_end);
 }
 
 void send_file_content(uv_write_t* req, int status);
 
 #define http_ok   "HTTP/1.0 200 OK\r\n"\
+                  "Content-Length: %llu\r\n"\
                   "Content-Type: text/html\r\n"\
                   "\r\n"
 void send_200(struct client_t* client)
 {
   size_t len = strlen(http_ok);
-  write_data((uv_stream_t*)client->handler, http_ok, len, client, send_file_content);
+  char* buffer = new char[len + 16];
+  sprintf(buffer, http_ok, client->content_size);
+  uv_stream_set_blocking((uv_stream_t*)client->handler, 1);
+  write_data((uv_stream_t*)client->handler, buffer, strlen(buffer), send_file_content);
+  delete[] buffer;
 }
 
-void on_file_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf)
+void on_file_send(uv_fs_t* req)
 {
-  struct client_t* client = (client_t*)stream->data;
-
-  if (nread == UV_EOF) {
-    syslog(LOG_NOTICE, "Read file %s", ">eof");
-    // on_file_read_end(stream, )
-  } else if (nread > 0) {
-    syslog(LOG_NOTICE, "Read file %d bytes", nread);
-    // file_tcp_pipe->nread += nread;
-    write_data((uv_stream_t*)client->handler, buf->base, nread, NULL, on_write_end);
-    uv_close((uv_handle_t*)stream, NULL);
-    finalize(client);
-  } else {
-    syslog(LOG_NOTICE, "Read file %s", "end");
-    // file_tcp_pipe_end(file_tcp_pipe, nread, CALLBACK);
-  }
-  if (buf->base)
-          free(buf->base);
+  client_t* client = (client_t*)req->data;
+  uv_fs_req_cleanup(req);
+  finalize(client);
 }
 
 void send_file_content(uv_write_t* req, int status)
 {
   struct client_t* client = (client_t*) req->data;
-  if (client) {
-    req->data = NULL;
-  }
-  on_write_end(req, status);
+  syslog(LOG_NOTICE, "Sending file content for client #%d", client->id);
 
-  std::string path = values.dir + client->url;
+  req->data = NULL;
+
+  on_write_end(req, status);
+  req = NULL;
+
+  const std::string& path = client->url;
 
   syslog(LOG_NOTICE, "Read file %s", path.c_str());
-  uv_pipe_t *file_pipe = (uv_pipe_t*) malloc(sizeof(uv_pipe_t));
+
   uv_fs_t file_open_req;
   int fd = uv_fs_open(loop, &file_open_req, path.c_str(), O_RDONLY, 0644, NULL);
-
-  if (uv_pipe_init(loop, file_pipe, 0) != 0) {
-    finalize(client);
+  if (fd < 0) {
+    syslog(LOG_ERR, "Cannot open file %s", path.c_str());
   }
-  if (uv_pipe_open(file_pipe, fd) != 0) {
-    finalize(client);
+  else {
+    uv_fs_t* file_send_req = (uv_fs_t*)malloc(sizeof(uv_fs_t));
+    file_send_req->data = client;
+    uv_file out_fd;
+    uv_fileno((uv_handle_t *)client->handler, &out_fd);
+    if (uv_fs_sendfile(loop, file_send_req, out_fd, fd, 0, client->content_size, on_file_send) < 0) {
+      syslog(LOG_ERR, "Cannot send file for client #%d", client->id);
+      uv_fs_req_cleanup(file_send_req);
+      finalize(client);
+    }
   }
-  file_pipe->data = client;
+}
 
-  uv_read_start((uv_stream_t *)file_pipe, alloc_buffer, on_file_read);
+void on_file_stat(uv_fs_t* req)
+{
+  client_t* client = (client_t*)req->data;
+  uv_stat_t& stat = req->statbuf;
+  client->content_size = stat.st_size;
+  syslog(LOG_NOTICE, "Client #%d will receive %llu bytes of content", client->id, stat.st_size);
+  send_200(client);
+  uv_fs_req_cleanup(req);
 }
 
 void make_response_get(struct client_t* client)
 {
-    const std::string& url = client->url;
-    std::string path = values.dir + url;
+    const std::string& path = client->url;
     if (access(path.c_str(), F_OK) == 0) { // file exists
-      send_200(client);
+      uv_fs_t* stat_req = (uv_fs_t*)malloc(sizeof(uv_fs_t));
+      stat_req->data = client;
+      if (uv_fs_stat(loop, stat_req, path.c_str(), on_file_stat) < 0) {
+        syslog(LOG_ERR, "Cannot get file stats for client #%d", client->id);
+        finalize(client);
+      }
     }
     else {
       send_404(client);
@@ -240,9 +255,6 @@ void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf)
     syslog(LOG_NOTICE, "Nothing to read from client's #%d stream (EOF=%s)",
         client->id, (nread == UV_EOF ? "yes":"no"));
     if (nread == UV_EOF){
-      make_response(client);
-    }
-    else {
       finalize(client);
     }
   } else if (nread > 0) {
@@ -254,7 +266,6 @@ void on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf)
     }
     else {
       syslog(LOG_NOTICE, "Method: %s, URL: %s", http_method_str((enum http_method)client->parser->method), client->url.c_str());
-      uv_read_stop(stream);
       make_response(client);
     }
     free(buf->base);
@@ -317,11 +328,13 @@ void on_new_connection(uv_stream_t* server, int status)
 int main(int argc, char * const argv[])
 {
   signal(SIGHUP, SIG_IGN);
-  
+
   daemonize();
   openlog("stepic.org", 0, LOG_USER);
 
   parse_cl_ordie(argc, argv, values);
+
+  chdir(values.dir.c_str());
 
   loop = uv_default_loop();
   uv_tcp_t server;
