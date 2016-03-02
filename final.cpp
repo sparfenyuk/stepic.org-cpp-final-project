@@ -125,7 +125,7 @@ void on_write_end(uv_write_t* req, int status)
   if(req->bufs) {
     free(req->bufs->base);
   }
-  free(req);
+
   struct client_t* client = (client_t*) req->data;
   if (client) {
     finalize(client);
